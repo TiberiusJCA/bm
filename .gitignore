@@ -1,0 +1,19 @@
+# Visual Studio
+.vs/
+
+# CMake out-of-source build folder
+build/
+
+# CMake generated files (in case of in-source configure)
+CMakeCache.txt
+CMakeFiles/
+cmake_install.cmake
+Makefile
+
+# MSVC artifacts
+*.obj
+*.pdb
+*.ilk
+*.idb
+*.tlog
+*.lastbuildstate
