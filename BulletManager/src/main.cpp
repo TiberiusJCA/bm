@@ -27,11 +27,30 @@ int main() {
 
     BulletManager manager;
 
-    // A few sample walls. Any bullet hit removes the wall and continues reflected.
-    manager.AddWall({-10.0f, 7.0f}, {10.0f, 7.0f});
-    manager.AddWall({-14.0f, -2.0f}, {-2.0f, 5.0f});
-    manager.AddWall({3.0f, -6.0f}, {13.0f, -2.0f});
-    manager.AddWall({-12.0f, -8.0f}, {12.0f, -8.0f});
+    // Spawn a dense random wall field while keeping a clear corridor near x = 0,
+    // which is where bullets are spawned.
+    {
+        std::mt19937 wallRng(424242u);
+        std::uniform_real_distribution<float> yDist(-20.0f, 20.0f);
+        std::uniform_real_distribution<float> xLeftDist(-20.0f, -2.0f);
+        std::uniform_real_distribution<float> xRightDist(2.0f, 20.0f);
+        std::uniform_real_distribution<float> angleDist(0.0f, 6.283185307f);
+        std::uniform_real_distribution<float> lengthDist(0.6f, 2.8f);
+        std::bernoulli_distribution sideDist(0.5);
+
+        constexpr int kWallCount = 400;
+        for (int i = 0; i < kWallCount; ++i) {
+            const bool onLeftSide = sideDist(wallRng);
+            const float cx = onLeftSide ? xLeftDist(wallRng) : xRightDist(wallRng);
+            const float cy = yDist(wallRng);
+            const float angle = angleDist(wallRng);
+            const float halfLength = 0.5f * lengthDist(wallRng);
+            const float dx = std::cos(angle) * halfLength;
+            const float dy = std::sin(angle) * halfLength;
+
+            manager.AddWall({cx - dx, cy - dy}, {cx + dx, cy + dy});
+        }
+    }
 
     std::atomic<bool> stopWorkers = false;
     std::vector<std::thread> workers;
@@ -40,14 +59,14 @@ int main() {
         workers.emplace_back([i, &manager, &stopWorkers]() {
             std::mt19937 rng(1337u + static_cast<unsigned>(i));
             std::uniform_real_distribution<float> angleDist(0.0f, 6.283185307f);
-            std::uniform_real_distribution<float> yOffsetDist(-4.0f, 4.0f);
+            std::uniform_real_distribution<float> yOffsetDist(-20.0f, 20.0f);
             std::uniform_real_distribution<float> speedDist(8.0f, 16.0f);
             std::uniform_real_distribution<float> pauseDist(0.10f, 0.35f);
 
             while (!stopWorkers.load(std::memory_order_relaxed)) {
                 const float angle = angleDist(rng);
                 const float2 dir = {std::cos(angle), std::sin(angle)};
-                const float2 start = {-16.0f + static_cast<float>(i) * 2.0f, yOffsetDist(rng)};
+                const float2 start = {0.0f, yOffsetDist(rng)};
                 const float speed = speedDist(rng);
                 const float now = static_cast<float>(GetTime());
                 manager.Fire(start, dir, speed, now, 8.0f);
@@ -63,8 +82,7 @@ int main() {
         BeginDrawing();
         ClearBackground(BLACK);
 
-        DrawText("Fire() runs from worker threads in parallel with Update()", 20, 20, 20, RAYWHITE);
-        DrawText("Walls disappear on hit, bullet keeps moving with reflected direction", 20, 50, 20, LIGHTGRAY);
+        DrawFPS(20, 20);
 
         const std::vector<Wall> walls = manager.GetWalls();
         for (const Wall& wall : walls) {
