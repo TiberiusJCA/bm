@@ -19,6 +19,47 @@ Vector2 ToScreen(float2 p) {
         static_cast<float>(kScreenWidth) * 0.5f + p.x * kPixelsPerMeter,
         static_cast<float>(kScreenHeight) * 0.5f - p.y * kPixelsPerMeter};
 }
+
+void Draw(BulletManager& manager, bool isFiring, bool simulationPaused) {
+    PROFILE_ZONE_SCOPED("MainLoop::Draw");
+
+    PROFILE_ZONE_BEGIN(BeginDrawingZone, "MainLoop::Draw / BeginDrawing");
+    BeginDrawing();
+    PROFILE_ZONE_END(BeginDrawingZone);
+
+    ClearBackground(BLACK);
+
+    const int fps = GetFPS();
+    const Color fpsColor = (fps < 60) ? ORANGE : RAYWHITE;
+    DrawText(TextFormat("FPS: %d", fps), 20, 20, 20, fpsColor);
+
+    PROFILE_ZONE_BEGIN(drawWallsZone, "MainLoop::Draw / Draw Walls");
+    const std::vector<Wall> walls = manager.GetWalls();
+    for (const Wall& wall : walls) {
+        DrawLineV(ToScreen(wall.a), ToScreen(wall.b), VIOLET);
+    }
+    PROFILE_ZONE_END(drawWallsZone);
+
+    PROFILE_ZONE_BEGIN(drawBulletsZone, "MainLoop::Draw / Draw Bullets");
+    const std::vector<float2> bullets = manager.GetBulletPositions();
+
+    for (const float2& p : bullets) {
+        DrawCircleV(ToScreen(p), 4.0f, SKYBLUE);
+    }
+    PROFILE_ZONE_END(drawBulletsZone);
+
+    DrawText(TextFormat("Alive bullets: %i  Walls: %i", static_cast<int>(bullets.size()), static_cast<int>(walls.size())), 20, 50, 20, LIGHTGRAY);
+    if (!isFiring) {
+        DrawText("Press ENTER to start bullet spawning", 20, 80, 20, YELLOW);
+    }
+    if (simulationPaused) {
+        DrawText("Simulation paused (press SPACE to resume)", 20, 110, 20, ORANGE);
+    }
+
+    PROFILE_ZONE_BEGIN(EndDrawingZone, "MainLoop::Draw / EndDrawing");
+    EndDrawing();
+    PROFILE_ZONE_END(EndDrawingZone);
+}
 }
 
 int main() {
@@ -84,6 +125,8 @@ int main() {
     }
 
     while (!WindowShouldClose()) {
+        PROFILE_ZONE_SCOPED("MainLoop::Frame");
+
         if (IsKeyPressed(KEY_ENTER)) {
             startFiring.store(true, std::memory_order_relaxed);
         }
@@ -96,31 +139,7 @@ int main() {
             manager.Update(now);
         }
 
-        BeginDrawing();
-        ClearBackground(BLACK);
-
-        const int fps = GetFPS();
-        const Color fpsColor = (fps < 60) ? ORANGE : RAYWHITE;
-        DrawText(TextFormat("FPS: %d", fps), 20, 20, 20, fpsColor);
-
-        const std::vector<Wall> walls = manager.GetWalls();
-        for (const Wall& wall : walls) {
-            DrawLineV(ToScreen(wall.a), ToScreen(wall.b), VIOLET);
-        }
-
-        const std::vector<float2> bullets = manager.GetBulletPositions();
-        DrawText(TextFormat("Alive bullets: %i  Walls: %i", static_cast<int>(bullets.size()), static_cast<int>(walls.size())), 20, 50, 20, LIGHTGRAY);
-        if (!startFiring.load(std::memory_order_relaxed)) {
-            DrawText("Press ENTER to start bullet spawning", 20, 80, 20, YELLOW);
-        }
-        if (simulationPaused) {
-            DrawText("Simulation paused (press SPACE to resume)", 20, 110, 20, ORANGE);
-        }
-        for (const float2& p : bullets) {
-            DrawCircleV(ToScreen(p), 4.0f, SKYBLUE);
-        }
-
-        EndDrawing();
+        Draw(manager, startFiring.load(std::memory_order_relaxed), simulationPaused);
     }
 
     stopWorkers.store(true, std::memory_order_relaxed);

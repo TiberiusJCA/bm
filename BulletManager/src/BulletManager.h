@@ -2,6 +2,18 @@
 
 #define ENABLE_PROFILING 1
 
+#if ENABLE_PROFILING
+#   include <tracy/Tracy.hpp>
+#   include <tracy/TracyC.h>
+#	define PROFILE_ZONE_SCOPED(N) ZoneScopedN(N)
+#   define PROFILE_ZONE_BEGIN(V, N) TracyCZoneN(V, N, 1)
+#   define PROFILE_ZONE_END(V) TracyCZoneEnd(V)
+#else
+#   define PROFILE_ZONE_SCOPED(N)
+#   define PROFILE_ZONE_BEGIN(V, N)
+#   define PROFILE_ZONE_END(V)
+#endif
+
 #include <cstddef>
 #include <cstdint>
 #include <mutex>
@@ -53,17 +65,19 @@ private:
     static bool IntersectSegments(float2 p, float2 r, float2 q, float2 s, float& outT, float& outU);
     static float2 Perpendicular(float2 v);
 
-    void DrainPendingShots();
+    void SpawnPendingBullets();
+    void SimulateBullets(float timeSeconds, float deltaTime);
+    void RemoveExpiredBullets(float timeSeconds);
     void SimulateBullet(Bullet& bullet, float deltaTime);
     bool TryFindClosestCollision(float2 start, float2 displacement, std::size_t& wallIndex, float& hitT, float2& hitNormal) const;
     bool IsWallValid(const Wall& wall) const;
 
-    std::vector<Bullet> bullets_;
-    std::vector<Wall> walls_;
-    std::vector<PendingFire> pendingShots_;
+    std::vector<Bullet> _bullets;
+    std::vector<Wall> _walls;
+    std::vector<PendingFire> _pendingShots;
 
-    mutable std::mutex stateMutex_;
+    mutable std::mutex _stateMutex;
 
-    float lastUpdateTime_ = 0.0f;
-    bool hasLastUpdate_ = false;
+    float _lastUpdateTime = 0.0f;
+    bool _hasLastUpdate = false;
 };

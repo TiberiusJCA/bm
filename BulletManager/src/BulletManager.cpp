@@ -3,25 +3,13 @@
 #include <algorithm>
 #include <cmath>
 
-#if ENABLE_PROFILING
-#   include <tracy/Tracy.hpp>
-#   include <tracy/TracyC.h>
-#	define PROFILE_ZONE_SCOPED(N) ZoneScopedN(N)
-#   define PROFILE_ZONE_BEGIN(V, N) TracyCZoneN(V, N, 1)
-#   define PROFILE_ZONE_END(V) TracyCZoneEnd(V)
-#else
-#   define PROFILE_ZONE_SCOPED(N)
-#   define PROFILE_ZONE_BEGIN(V, N)
-#   define PROFILE_ZONE_END(V)
-#endif
-
 namespace {
 constexpr float kEpsilon = 1e-5f;
 }
 
 void BulletManager::AddWall(float2 a, float2 b) {
-    std::scoped_lock lock(stateMutex_);
-    walls_.push_back({a, b});
+    std::scoped_lock lock(_stateMutex);
+    _walls.push_back({a, b});
 }
 
 void BulletManager::Fire(float2 pos, float2 dir, float speed, float time, float lifeTime) {
@@ -30,64 +18,47 @@ void BulletManager::Fire(float2 pos, float2 dir, float speed, float time, float 
         return;
     }
 
-    std::scoped_lock lock(stateMutex_);
-    pendingShots_.push_back({pos, normalized, speed, time, lifeTime});
+    std::scoped_lock lock(_stateMutex);
+    _pendingShots.push_back({pos, normalized, speed, time, lifeTime});
 }
 
 void BulletManager::Update(float timeSeconds) {
     PROFILE_ZONE_SCOPED     ("BulletManager::Update");
 
     PROFILE_ZONE_BEGIN(lockWaitZone, "BulletManager::Update / lock wait");
-    std::scoped_lock lock(stateMutex_);
+    std::scoped_lock lock(_stateMutex);
     PROFILE_ZONE_END(lockWaitZone);
 
     {
-        PROFILE_ZONE_SCOPED("BulletManager::Update / DrainPendingShots");
-        DrainPendingShots();
+        PROFILE_ZONE_SCOPED("BulletManager::Update / SpawnPendingBullets");
+        SpawnPendingBullets();
     }
 
-    if (!hasLastUpdate_) {
-        lastUpdateTime_ = timeSeconds;
-        hasLastUpdate_ = true;
+    if (!_hasLastUpdate) {
+        _lastUpdateTime = timeSeconds;
+        _hasLastUpdate = true;
     }
 
-    const float dt = std::max(0.0f, timeSeconds - lastUpdateTime_);
-    lastUpdateTime_ = timeSeconds;
+    const float dt = std::max(0.0f, timeSeconds - _lastUpdateTime);
+    _lastUpdateTime = timeSeconds;
 
     {
-        PROFILE_ZONE_SCOPED("BulletManager::Update / SimulateBullet");
-        for (Bullet& bullet : bullets_) {
-            if (!bullet.activated && timeSeconds >= bullet.fireTime) {
-                bullet.activated = true;
-            }
-
-            if (!bullet.activated) {
-                continue;
-            }
-
-            SimulateBullet(bullet, dt);
-        }
+        PROFILE_ZONE_SCOPED("BulletManager::Update / SimulateBullets");
+        SimulateBullets(timeSeconds, dt);
     }
 
     {
-        PROFILE_ZONE_SCOPED("BulletManager::Update / bullets_.erase");
-        bullets_.erase(
-            std::remove_if(
-                bullets_.begin(),
-                bullets_.end(),
-                [timeSeconds](const Bullet& bullet) {
-                    return timeSeconds >= bullet.fireTime + bullet.lifeTime;
-                }),
-            bullets_.end());
+        PROFILE_ZONE_SCOPED("BulletManager::Update / RemoveExpiredBullets");
+        RemoveExpiredBullets(timeSeconds);
     }
 }
 
 std::vector<float2> BulletManager::GetBulletPositions() const {
-    std::scoped_lock lock(stateMutex_);
+    std::scoped_lock lock(_stateMutex);
     std::vector<float2> out;
-    out.reserve(bullets_.size());
+    out.reserve(_bullets.size());
 
-    for (const Bullet& bullet : bullets_) {
+    for (const Bullet& bullet : _bullets) {
         if (bullet.activated) {
             out.push_back(bullet.position);
         }
@@ -96,8 +67,8 @@ std::vector<float2> BulletManager::GetBulletPositions() const {
 }
 
 std::vector<Wall> BulletManager::GetWalls() const {
-    std::scoped_lock lock(stateMutex_);
-    return walls_;
+    std::scoped_lock lock(_stateMutex);
+    return _walls;
 }
 
 float2 BulletManager::Normalize(float2 v) {
@@ -147,11 +118,36 @@ bool BulletManager::IntersectSegments(float2 p, float2 r, float2 q, float2 s, fl
     return outT >= 0.0f && outT <= 1.0f && outU >= 0.0f && outU <= 1.0f;
 }
 
-void BulletManager::DrainPendingShots() {
-    for (const PendingFire& pending : pendingShots_) {
-        bullets_.push_back({pending.pos, pending.dir, pending.speed, pending.fireTime, pending.lifeTime, false});
+void BulletManager::SpawnPendingBullets() {
+    for (const PendingFire& pending : _pendingShots) {
+        _bullets.push_back({pending.pos, pending.dir, pending.speed, pending.fireTime, pending.lifeTime, false});
     }
-    pendingShots_.clear();
+    _pendingShots.clear();
+}
+
+void BulletManager::SimulateBullets(float timeSeconds, float deltaTime) {
+    for (Bullet& bullet : _bullets) {
+        if (!bullet.activated && timeSeconds >= bullet.fireTime) {
+            bullet.activated = true;
+        }
+
+        if (!bullet.activated) {
+            continue;
+        }
+
+        SimulateBullet(bullet, deltaTime);
+    }
+}
+
+void BulletManager::RemoveExpiredBullets(float timeSeconds) {
+    _bullets.erase(
+        std::remove_if(
+            _bullets.begin(),
+            _bullets.end(),
+            [timeSeconds](const Bullet& bullet) {
+                return timeSeconds >= bullet.fireTime + bullet.lifeTime;
+            }),
+        _bullets.end());
 }
 
 void BulletManager::SimulateBullet(Bullet& bullet, float deltaTime) {
@@ -178,8 +174,8 @@ void BulletManager::SimulateBullet(Bullet& bullet, float deltaTime) {
         const float travelBeforeHit = std::max(0.0f, hitT) * remainingDistance;
         bullet.position = Add(bullet.position, Mul(bullet.direction, travelBeforeHit));
 
-        if (wallIndex < walls_.size()) {
-            walls_.erase(walls_.begin() + static_cast<std::ptrdiff_t>(wallIndex));
+        if (wallIndex < _walls.size()) {
+            _walls.erase(_walls.begin() + static_cast<std::ptrdiff_t>(wallIndex));
         }
 
         bullet.direction = Normalize(Reflect(bullet.direction, hitNormal));
@@ -196,8 +192,8 @@ bool BulletManager::TryFindClosestCollision(float2 start, float2 displacement, s
     bool found = false;
     float bestT = 1.0f;
 
-    for (std::size_t i = 0; i < walls_.size(); ++i) {
-        const Wall& wall = walls_[i];
+    for (std::size_t i = 0; i < _walls.size(); ++i) {
+        const Wall& wall = _walls[i];
         if (!IsWallValid(wall)) {
             continue;
         }
