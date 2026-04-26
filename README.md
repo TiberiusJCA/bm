@@ -1,10 +1,6 @@
 # BulletManager Assignment
 
-This repository contains a C++ project that demonstrates:
-
-- `void Update(float time)` on the main thread
-- `void Fire(float2 pos, float2 dir, float speed, float time, float life_time)` from worker threads in parallel with `Update`
-- Bullet-wall collision behavior where a wall is removed and bullet trajectory is reflected
+This repository contains a C++ project that demonstrates bullet collision simulator in 2d
 
 ## Requirements
 
