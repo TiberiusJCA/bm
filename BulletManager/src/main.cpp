@@ -13,7 +13,8 @@ namespace {
 constexpr int kScreenWidth = 1280;
 constexpr int kScreenHeight = 720;
 constexpr float kPixelsPerMeter = 30.0f;
-constexpr float kMaxBulletSpeed = 16.0f;
+constexpr float kMaxBulletSpeed = 5.0f;
+constexpr float kGridCellSize = 1.0f;
 
 Vector2 ToScreen(float2 p) {
     return {
@@ -39,11 +40,43 @@ void Draw(BulletManager& manager, bool isFiring, bool simulationPaused) {
     for (const Wall& wall : walls) {
         DrawLineV(ToScreen(wall.a), ToScreen(wall.b), VIOLET);
     }
+
+    float2 gridBoundsMin = {};
+    float2 gridBoundsMax = {};
+    int gridWidth = 0;
+    int gridHeight = 0;
+    float gridCellSize = 0.0f;
+    const bool hasGrid = manager.GetWallSpatialGridInfo(gridBoundsMin, gridBoundsMax, gridWidth, gridHeight, gridCellSize);
+    if (hasGrid) {
+        const Vector2 topLeft = ToScreen({gridBoundsMin.x, gridBoundsMax.y});
+        const Vector2 bottomRight = ToScreen({gridBoundsMax.x, gridBoundsMin.y});
+        const int rectX = static_cast<int>(topLeft.x);
+        const int rectY = static_cast<int>(topLeft.y);
+        const int rectW = static_cast<int>(bottomRight.x - topLeft.x);
+        const int rectH = static_cast<int>(bottomRight.y - topLeft.y);
+        DrawRectangleLines(rectX, rectY, rectW, rectH, DARKGREEN);
+
+        for (int x = 1; x < gridWidth; ++x) {
+            const float worldX = gridBoundsMin.x + static_cast<float>(x) * gridCellSize;
+            const Vector2 a = ToScreen({worldX, gridBoundsMax.y});
+            const Vector2 b = ToScreen({worldX, gridBoundsMin.y});
+            DrawLineV(a, b, Fade(DARKGREEN, 0.35f));
+        }
+
+        for (int y = 1; y < gridHeight; ++y) {
+            const float worldY = gridBoundsMin.y + static_cast<float>(y) * gridCellSize;
+            const Vector2 a = ToScreen({gridBoundsMin.x, worldY});
+            const Vector2 b = ToScreen({gridBoundsMax.x, worldY});
+            DrawLineV(a, b, Fade(DARKGREEN, 0.35f));
+        }
+    }
     PROFILE_ZONE_END(drawWallsZone);
 
     PROFILE_ZONE_BEGIN(drawBulletsZone, "MainLoop::Draw / Draw Bullets");
     const std::vector<float2> bullets = manager.GetBulletPositions();
     const std::uint64_t collisionChecks = manager.GetCollisionChecksPerFrame();
+    const std::uint64_t possibleCollisionChecks =
+        static_cast<std::uint64_t>(bullets.size()) * static_cast<std::uint64_t>(walls.size());
 
     for (const float2& p : bullets) {
         DrawCircleV(ToScreen(p), 4.0f, SKYBLUE);
@@ -52,11 +85,28 @@ void Draw(BulletManager& manager, bool isFiring, bool simulationPaused) {
 
     DrawText(TextFormat("Alive bullets: %i  Walls: %i", static_cast<int>(bullets.size()), static_cast<int>(walls.size())), 20, 50, 20, LIGHTGRAY);
     DrawText(TextFormat("Collision checks/frame: %llu", static_cast<unsigned long long>(collisionChecks)), 20, 80, 20, LIGHTGRAY);
+    DrawText(TextFormat("Possible checks/frame: %llu", static_cast<unsigned long long>(possibleCollisionChecks)), 20, 110, 20, LIGHTGRAY);
+    if (hasGrid) {
+        DrawText(
+            TextFormat(
+                "Grid: %dx%d  cell: %.1f  bounds:[%.1f..%.1f]x[%.1f..%.1f]",
+                gridWidth,
+                gridHeight,
+                gridCellSize,
+                gridBoundsMin.x,
+                gridBoundsMax.x,
+                gridBoundsMin.y,
+                gridBoundsMax.y),
+            20,
+            140,
+            20,
+            GREEN);
+    }
     if (!isFiring) {
-        DrawText("Press ENTER to start bullet spawning", 20, 110, 20, YELLOW);
+        DrawText("Press ENTER to start bullet spawning", 20, 170, 20, YELLOW);
     }
     if (simulationPaused) {
-        DrawText("Simulation paused (press SPACE to resume)", 20, 140, 20, ORANGE);
+        DrawText("Simulation paused (press SPACE to resume)", 20, 200, 20, ORANGE);
     }
 
     PROFILE_ZONE_BEGIN(EndDrawingZone, "MainLoop::Draw / EndDrawing");
@@ -97,7 +147,7 @@ int main() {
             manager.AddWall({cx - dx, cy - dy}, {cx + dx, cy + dy});
         }
         manager.RecalculateWallsBounds();
-        manager.BuildWallSpatialGrid(kMaxBulletSpeed);
+        manager.BuildWallSpatialGrid(kGridCellSize);
     }
 
     std::atomic<bool> stopWorkers = false;
@@ -110,7 +160,7 @@ int main() {
             std::mt19937 rng(1337u + static_cast<unsigned>(i));
             std::uniform_real_distribution<float> angleDist(0.0f, 6.283185307f);
             std::uniform_real_distribution<float> yOffsetDist(-20.0f, 20.0f);
-            std::uniform_real_distribution<float> speedDist(8.0f, 16.0f);
+            std::uniform_real_distribution<float> speedDist(2.5f, kMaxBulletSpeed);
             // With 5 worker threads and 8s lifetime, this cadence targets ~10,000 live bullets.
             std::uniform_real_distribution<float> pauseDist(0.0035f, 0.0045f);
 

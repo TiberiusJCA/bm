@@ -43,6 +43,7 @@ public:
     [[nodiscard]] std::vector<float2> GetBulletPositions() const;
     [[nodiscard]] std::vector<Wall> GetWalls() const;
     [[nodiscard]] std::uint64_t GetCollisionChecksPerFrame() const;
+    [[nodiscard]] bool GetWallSpatialGridInfo(float2& boundsMin, float2& boundsMax, int& gridWidth, int& gridHeight, float& cellSize) const;
 
 private:
     struct Bullet {

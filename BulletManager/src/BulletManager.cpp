@@ -169,6 +169,20 @@ std::uint64_t BulletManager::GetCollisionChecksPerFrame() const {
     return _collisionChecksPerFrame;
 }
 
+bool BulletManager::GetWallSpatialGridInfo(float2& boundsMin, float2& boundsMax, int& gridWidth, int& gridHeight, float& cellSize) const {
+    std::scoped_lock lock(_stateMutex);
+    if (!_hasWallGrid || !_hasWallsBounds) {
+        return false;
+    }
+
+    boundsMin = _wallsBoundsMin;
+    boundsMax = _wallsBoundsMax;
+    gridWidth = _wallGridWidth;
+    gridHeight = _wallGridHeight;
+    cellSize = _wallGridCellSize;
+    return true;
+}
+
 float2 BulletManager::Normalize(float2 v) {
     const float lenSq = v.x * v.x + v.y * v.y;
     if (lenSq <= kEpsilon) {
@@ -354,55 +368,94 @@ bool BulletManager::TryFindClosestCollision(float2 start, float2 displacement, s
         return false;
     }
 
-    const int centerX = GetWallCellX(start.x);
-    const int centerY = GetWallCellY(start.y);
     ++_wallVisitGeneration;
     if (_wallVisitGeneration == 0) {
         std::fill(_wallVisitedStamp.begin(), _wallVisitedStamp.end(), 0);
         _wallVisitGeneration = 1;
     }
 
-    for (int ny = std::max(0, centerY - 1); ny <= std::min(_wallGridHeight - 1, centerY + 1); ++ny) {
-        for (int nx = std::max(0, centerX - 1); nx <= std::min(_wallGridWidth - 1, centerX + 1); ++nx) {
-            const std::vector<std::size_t>& cellWalls = _wallsByGridCell[GetWallGridIndex(nx, ny)];
-            for (const std::size_t i : cellWalls) {
-                if (i >= _walls.size()) {
-                    continue;
-                }
-                if (_wallVisitedStamp[i] == _wallVisitGeneration) {
-                    continue;
-                }
-                _wallVisitedStamp[i] = _wallVisitGeneration;
-
-                const Wall& wall = _walls[i];
-                if (!IsWallValid(wall)) {
-                    continue;
-                }
-
-                const float2 wallVec = Sub(wall.b, wall.a);
-                float t = 0.0f;
-                float u = 0.0f;
-                ++_collisionChecksPerFrame;
-
-                if (!IntersectSegments(start, displacement, wall.a, wallVec, t, u)) {
-                    continue;
-                }
-
-                if (t < 0.0f || t > bestT) {
-                    continue;
-                }
-
-                bestT = t;
-                wallIndex = i;
-                found = true;
-
-                float2 n = Normalize(Perpendicular(wallVec));
-                if (Dot(displacement, n) > 0.0f) {
-                    n = Mul(n, -1.0f);
-                }
-                hitNormal = n;
+    auto testCellWalls = [&](int cellX, int cellY) {
+        const std::vector<std::size_t>& cellWalls = _wallsByGridCell[GetWallGridIndex(cellX, cellY)];
+        for (const std::size_t i : cellWalls) {
+            if (i >= _walls.size()) {
+                continue;
             }
+            if (_wallVisitedStamp[i] == _wallVisitGeneration) {
+                continue;
+            }
+            _wallVisitedStamp[i] = _wallVisitGeneration;
+
+            const Wall& wall = _walls[i];
+            if (!IsWallValid(wall)) {
+                continue;
+            }
+
+            const float2 wallVec = Sub(wall.b, wall.a);
+            float t = 0.0f;
+            float u = 0.0f;
+            ++_collisionChecksPerFrame;
+
+            if (!IntersectSegments(start, displacement, wall.a, wallVec, t, u)) {
+                continue;
+            }
+
+            if (t < 0.0f || t > bestT) {
+                continue;
+            }
+
+            bestT = t;
+            wallIndex = i;
+            found = true;
+
+            float2 n = Normalize(Perpendicular(wallVec));
+            if (Dot(displacement, n) > 0.0f) {
+                n = Mul(n, -1.0f);
+            }
+            hitNormal = n;
         }
+    };
+
+    const float2 end = Add(start, displacement);
+    int cellX = GetWallCellX(start.x);
+    int cellY = GetWallCellY(start.y);
+    const int endCellX = GetWallCellX(end.x);
+    const int endCellY = GetWallCellY(end.y);
+
+    const float dx = end.x - start.x;
+    const float dy = end.y - start.y;
+    const int stepX = (dx > 0.0f) ? 1 : ((dx < 0.0f) ? -1 : 0);
+    const int stepY = (dy > 0.0f) ? 1 : ((dy < 0.0f) ? -1 : 0);
+
+    auto nextBoundaryX = [&]() {
+        return _wallsBoundsMin.x + ((stepX > 0 ? (cellX + 1) : cellX) * _wallGridCellSize);
+    };
+    auto nextBoundaryY = [&]() {
+        return _wallsBoundsMin.y + ((stepY > 0 ? (cellY + 1) : cellY) * _wallGridCellSize);
+    };
+
+    const float invDx = (std::abs(dx) > kEpsilon) ? (1.0f / dx) : 0.0f;
+    const float invDy = (std::abs(dy) > kEpsilon) ? (1.0f / dy) : 0.0f;
+
+    float tMaxX = (stepX != 0) ? (nextBoundaryX() - start.x) * invDx : std::numeric_limits<float>::infinity();
+    float tMaxY = (stepY != 0) ? (nextBoundaryY() - start.y) * invDy : std::numeric_limits<float>::infinity();
+    float tDeltaX = (stepX != 0) ? std::abs(_wallGridCellSize * invDx) : std::numeric_limits<float>::infinity();
+    float tDeltaY = (stepY != 0) ? std::abs(_wallGridCellSize * invDy) : std::numeric_limits<float>::infinity();
+
+    testCellWalls(cellX, cellY);
+    while ((cellX != endCellX || cellY != endCellY) && (tMaxX <= 1.0f || tMaxY <= 1.0f)) {
+        if (tMaxX < tMaxY) {
+            cellX += stepX;
+            tMaxX += tDeltaX;
+        } else {
+            cellY += stepY;
+            tMaxY += tDeltaY;
+        }
+
+        if (cellX < 0 || cellX >= _wallGridWidth || cellY < 0 || cellY >= _wallGridHeight) {
+            break;
+        }
+
+        testCellWalls(cellX, cellY);
     }
 
     hitT = bestT;
