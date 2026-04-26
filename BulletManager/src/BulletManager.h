@@ -27,16 +27,22 @@ struct float2 {
 struct Wall {
     float2 a;
     float2 b;
+    bool broken = false;
 };
 
 class BulletManager {
 public:
+    void ReserveBullets(std::size_t count);
+    void ReserveWalls(std::size_t count);
     void AddWall(float2 a, float2 b);
+    void RecalculateWallsBounds();
+    void BuildWallSpatialGrid(float cellSize);
     void Update(float timeSeconds);
     void Fire(float2 pos, float2 dir, float speed, float time, float lifeTime);
 
     [[nodiscard]] std::vector<float2> GetBulletPositions() const;
     [[nodiscard]] std::vector<Wall> GetWalls() const;
+    [[nodiscard]] std::uint64_t GetCollisionChecksPerFrame() const;
 
 private:
     struct Bullet {
@@ -45,6 +51,7 @@ private:
         float speed = 0.0f;
         float fireTime = 0.0f;
         float lifeTime = 0.0f;
+        bool alive = false;
         bool activated = false;
     };
 
@@ -64,6 +71,10 @@ private:
     static float2 Reflect(float2 dir, float2 normal);
     static bool IntersectSegments(float2 p, float2 r, float2 q, float2 s, float& outT, float& outU);
     static float2 Perpendicular(float2 v);
+    bool IsOutsideWallsBounds(float2 p) const;
+    int GetWallCellX(float x) const;
+    int GetWallCellY(float y) const;
+    std::size_t GetWallGridIndex(int x, int y) const;
 
     void SpawnPendingBullets();
     void SimulateBullets(float timeSeconds, float deltaTime);
@@ -73,11 +84,24 @@ private:
     bool IsWallValid(const Wall& wall) const;
 
     std::vector<Bullet> _bullets;
+    std::vector<std::size_t> _deadBulletIndices;
     std::vector<Wall> _walls;
     std::vector<PendingFire> _pendingShots;
 
     mutable std::mutex _stateMutex;
 
+    float2 _wallsBoundsMin = {};
+    float2 _wallsBoundsMax = {};
+    bool _hasWallsBounds = false;
+    float _wallGridCellSize = 0.0f;
+    int _wallGridWidth = 0;
+    int _wallGridHeight = 0;
+    bool _hasWallGrid = false;
+    std::vector<std::vector<std::size_t>> _wallsByGridCell;
+    mutable std::vector<std::uint32_t> _wallVisitedStamp;
+    mutable std::uint32_t _wallVisitGeneration = 0;
+
     float _lastUpdateTime = 0.0f;
     bool _hasLastUpdate = false;
+    mutable std::uint64_t _collisionChecksPerFrame = 0;
 };

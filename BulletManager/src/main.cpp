@@ -13,6 +13,7 @@ namespace {
 constexpr int kScreenWidth = 1280;
 constexpr int kScreenHeight = 720;
 constexpr float kPixelsPerMeter = 30.0f;
+constexpr float kMaxBulletSpeed = 16.0f;
 
 Vector2 ToScreen(float2 p) {
     return {
@@ -42,6 +43,7 @@ void Draw(BulletManager& manager, bool isFiring, bool simulationPaused) {
 
     PROFILE_ZONE_BEGIN(drawBulletsZone, "MainLoop::Draw / Draw Bullets");
     const std::vector<float2> bullets = manager.GetBulletPositions();
+    const std::uint64_t collisionChecks = manager.GetCollisionChecksPerFrame();
 
     for (const float2& p : bullets) {
         DrawCircleV(ToScreen(p), 4.0f, SKYBLUE);
@@ -49,11 +51,12 @@ void Draw(BulletManager& manager, bool isFiring, bool simulationPaused) {
     PROFILE_ZONE_END(drawBulletsZone);
 
     DrawText(TextFormat("Alive bullets: %i  Walls: %i", static_cast<int>(bullets.size()), static_cast<int>(walls.size())), 20, 50, 20, LIGHTGRAY);
+    DrawText(TextFormat("Collision checks/frame: %llu", static_cast<unsigned long long>(collisionChecks)), 20, 80, 20, LIGHTGRAY);
     if (!isFiring) {
-        DrawText("Press ENTER to start bullet spawning", 20, 80, 20, YELLOW);
+        DrawText("Press ENTER to start bullet spawning", 20, 110, 20, YELLOW);
     }
     if (simulationPaused) {
-        DrawText("Simulation paused (press SPACE to resume)", 20, 110, 20, ORANGE);
+        DrawText("Simulation paused (press SPACE to resume)", 20, 140, 20, ORANGE);
     }
 
     PROFILE_ZONE_BEGIN(EndDrawingZone, "MainLoop::Draw / EndDrawing");
@@ -67,6 +70,7 @@ int main() {
     SetTargetFPS(60);
 
     BulletManager manager;
+    manager.ReserveBullets(1u << 17);
 
     // Spawn a dense random wall field while keeping a clear corridor near x = 0,
     // which is where bullets are spawned.
@@ -80,6 +84,7 @@ int main() {
         std::bernoulli_distribution sideDist(0.5);
 
         constexpr int kWallCount = 10000;
+        manager.ReserveWalls(static_cast<std::size_t>(kWallCount));
         for (int i = 0; i < kWallCount; ++i) {
             const bool onLeftSide = sideDist(wallRng);
             const float cx = onLeftSide ? xLeftDist(wallRng) : xRightDist(wallRng);
@@ -91,15 +96,17 @@ int main() {
 
             manager.AddWall({cx - dx, cy - dy}, {cx + dx, cy + dy});
         }
+        manager.RecalculateWallsBounds();
+        manager.BuildWallSpatialGrid(kMaxBulletSpeed);
     }
 
     std::atomic<bool> stopWorkers = false;
     std::atomic<bool> startFiring = false;
-    bool simulationPaused = false;
+    std::atomic<bool> simulationPaused = false;
     std::vector<std::thread> workers;
 
     for (int i = 0; i < 5; ++i) {
-        workers.emplace_back([i, &manager, &stopWorkers, &startFiring]() {
+        workers.emplace_back([i, &manager, &stopWorkers, &startFiring, &simulationPaused]() {
             std::mt19937 rng(1337u + static_cast<unsigned>(i));
             std::uniform_real_distribution<float> angleDist(0.0f, 6.283185307f);
             std::uniform_real_distribution<float> yOffsetDist(-20.0f, 20.0f);
@@ -109,6 +116,10 @@ int main() {
 
             while (!stopWorkers.load(std::memory_order_relaxed)) {
                 if (!startFiring.load(std::memory_order_relaxed)) {
+                    std::this_thread::sleep_for(std::chrono::milliseconds(10));
+                    continue;
+                }
+                if (simulationPaused.load(std::memory_order_relaxed)) {
                     std::this_thread::sleep_for(std::chrono::milliseconds(10));
                     continue;
                 }
@@ -131,15 +142,15 @@ int main() {
             startFiring.store(true, std::memory_order_relaxed);
         }
         if (IsKeyPressed(KEY_SPACE)) {
-            simulationPaused = !simulationPaused;
+            simulationPaused.store(!simulationPaused.load(std::memory_order_relaxed), std::memory_order_relaxed);
         }
 
         const float now = static_cast<float>(GetTime());
-        if (!simulationPaused) {
+        if (!simulationPaused.load(std::memory_order_relaxed)) {
             manager.Update(now);
         }
 
-        Draw(manager, startFiring.load(std::memory_order_relaxed), simulationPaused);
+        Draw(manager, startFiring.load(std::memory_order_relaxed), simulationPaused.load(std::memory_order_relaxed));
     }
 
     stopWorkers.store(true, std::memory_order_relaxed);
