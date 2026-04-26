@@ -18,7 +18,14 @@ FetchContent_Declare(
     GIT_TAG 5.5
 )
 
+FetchContent_Declare(
+    tracy
+    GIT_REPOSITORY https://github.com/wolfpld/tracy.git
+    GIT_TAG v0.12.2
+)
+
 FetchContent_MakeAvailable(raylib)
+FetchContent_MakeAvailable(tracy)
 
 add_executable(BulletManager
     BulletManager/src/main.cpp
@@ -26,7 +33,7 @@ add_executable(BulletManager
     BulletManager/src/BulletManager.h
 )
 
-target_link_libraries(BulletManager PRIVATE raylib)
+target_link_libraries(BulletManager PRIVATE raylib Tracy::TracyClient)
 
 if(MSVC)
     target_compile_options(BulletManager PRIVATE /W4 /permissive-)

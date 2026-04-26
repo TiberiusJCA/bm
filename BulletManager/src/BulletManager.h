@@ -1,5 +1,7 @@
 #pragma once
 
+#define ENABLE_PROFILING 1
+
 #include <cstddef>
 #include <cstdint>
 #include <mutex>

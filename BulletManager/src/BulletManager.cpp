@@ -3,6 +3,18 @@
 #include <algorithm>
 #include <cmath>
 
+#if ENABLE_PROFILING
+#   include <tracy/Tracy.hpp>
+#   include <tracy/TracyC.h>
+#	define PROFILE_ZONE_SCOPED(N) ZoneScopedN(N)
+#   define PROFILE_ZONE_BEGIN(V, N) TracyCZoneN(V, N, 1)
+#   define PROFILE_ZONE_END(V) TracyCZoneEnd(V)
+#else
+#   define PROFILE_ZONE_SCOPED(N)
+#   define PROFILE_ZONE_BEGIN(V, N)
+#   define PROFILE_ZONE_END(V)
+#endif
+
 namespace {
 constexpr float kEpsilon = 1e-5f;
 }
@@ -23,8 +35,16 @@ void BulletManager::Fire(float2 pos, float2 dir, float speed, float time, float 
 }
 
 void BulletManager::Update(float timeSeconds) {
+    PROFILE_ZONE_SCOPED     ("BulletManager::Update");
+
+    PROFILE_ZONE_BEGIN(lockWaitZone, "BulletManager::Update / lock wait");
     std::scoped_lock lock(stateMutex_);
-    DrainPendingShots();
+    PROFILE_ZONE_END(lockWaitZone);
+
+    {
+        PROFILE_ZONE_SCOPED("BulletManager::Update / DrainPendingShots");
+        DrainPendingShots();
+    }
 
     if (!hasLastUpdate_) {
         lastUpdateTime_ = timeSeconds;
@@ -34,26 +54,32 @@ void BulletManager::Update(float timeSeconds) {
     const float dt = std::max(0.0f, timeSeconds - lastUpdateTime_);
     lastUpdateTime_ = timeSeconds;
 
-    for (Bullet& bullet : bullets_) {
-        if (!bullet.activated && timeSeconds >= bullet.fireTime) {
-            bullet.activated = true;
-        }
+    {
+        PROFILE_ZONE_SCOPED("BulletManager::Update / SimulateBullet");
+        for (Bullet& bullet : bullets_) {
+            if (!bullet.activated && timeSeconds >= bullet.fireTime) {
+                bullet.activated = true;
+            }
 
-        if (!bullet.activated) {
-            continue;
-        }
+            if (!bullet.activated) {
+                continue;
+            }
 
-        SimulateBullet(bullet, dt);
+            SimulateBullet(bullet, dt);
+        }
     }
 
-    bullets_.erase(
-        std::remove_if(
-            bullets_.begin(),
-            bullets_.end(),
-            [timeSeconds](const Bullet& bullet) {
-                return timeSeconds >= bullet.fireTime + bullet.lifeTime;
-            }),
-        bullets_.end());
+    {
+        PROFILE_ZONE_SCOPED("BulletManager::Update / bullets_.erase");
+        bullets_.erase(
+            std::remove_if(
+                bullets_.begin(),
+                bullets_.end(),
+                [timeSeconds](const Bullet& bullet) {
+                    return timeSeconds >= bullet.fireTime + bullet.lifeTime;
+                }),
+            bullets_.end());
+    }
 }
 
 std::vector<float2> BulletManager::GetBulletPositions() const {

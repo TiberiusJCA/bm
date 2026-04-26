@@ -53,10 +53,12 @@ int main() {
     }
 
     std::atomic<bool> stopWorkers = false;
+    std::atomic<bool> startFiring = false;
+    bool simulationPaused = false;
     std::vector<std::thread> workers;
 
     for (int i = 0; i < 5; ++i) {
-        workers.emplace_back([i, &manager, &stopWorkers]() {
+        workers.emplace_back([i, &manager, &stopWorkers, &startFiring]() {
             std::mt19937 rng(1337u + static_cast<unsigned>(i));
             std::uniform_real_distribution<float> angleDist(0.0f, 6.283185307f);
             std::uniform_real_distribution<float> yOffsetDist(-20.0f, 20.0f);
@@ -65,6 +67,11 @@ int main() {
             std::uniform_real_distribution<float> pauseDist(0.0035f, 0.0045f);
 
             while (!stopWorkers.load(std::memory_order_relaxed)) {
+                if (!startFiring.load(std::memory_order_relaxed)) {
+                    std::this_thread::sleep_for(std::chrono::milliseconds(10));
+                    continue;
+                }
+
                 const float angle = angleDist(rng);
                 const float2 dir = {std::cos(angle), std::sin(angle)};
                 const float2 start = {0.0f, yOffsetDist(rng)};
@@ -77,8 +84,17 @@ int main() {
     }
 
     while (!WindowShouldClose()) {
+        if (IsKeyPressed(KEY_ENTER)) {
+            startFiring.store(true, std::memory_order_relaxed);
+        }
+        if (IsKeyPressed(KEY_SPACE)) {
+            simulationPaused = !simulationPaused;
+        }
+
         const float now = static_cast<float>(GetTime());
-        manager.Update(now);
+        if (!simulationPaused) {
+            manager.Update(now);
+        }
 
         BeginDrawing();
         ClearBackground(BLACK);
@@ -94,6 +110,12 @@ int main() {
 
         const std::vector<float2> bullets = manager.GetBulletPositions();
         DrawText(TextFormat("Alive bullets: %i  Walls: %i", static_cast<int>(bullets.size()), static_cast<int>(walls.size())), 20, 50, 20, LIGHTGRAY);
+        if (!startFiring.load(std::memory_order_relaxed)) {
+            DrawText("Press ENTER to start bullet spawning", 20, 80, 20, YELLOW);
+        }
+        if (simulationPaused) {
+            DrawText("Simulation paused (press SPACE to resume)", 20, 110, 20, ORANGE);
+        }
         for (const float2& p : bullets) {
             DrawCircleV(ToScreen(p), 4.0f, SKYBLUE);
         }
