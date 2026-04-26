@@ -14,11 +14,15 @@ void BulletManager::ReserveBullets(std::size_t count) {
     _bullets.clear();
     _bullets.resize(count);
 
-    _deadBulletIndices.clear();
-    _deadBulletIndices.reserve(count);
+    _deadBulletIndices.resize(count);
+    _deadBulletCount = count;
     for (std::size_t i = 0; i < count; ++i) {
-        _deadBulletIndices.push_back(count - 1 - i);
+        _deadBulletIndices[i] = count - 1 - i;
     }
+    _activeBulletIndices.clear();
+    _activeBulletIndices.reserve(count);
+    _nextActiveBulletIndices.clear();
+    _nextActiveBulletIndices.reserve(count);
 }
 
 void BulletManager::ReserveWalls(std::size_t count) {
@@ -103,12 +107,20 @@ void BulletManager::Fire(float2 pos, float2 dir, float speed, float time, float 
         return;
     }
 
-    std::scoped_lock lock(_stateMutex);
+    std::scoped_lock lock(_pendingShotsMutex);
     _pendingShots.push_back({pos, normalized, speed, time, lifeTime});
 }
 
 void BulletManager::Update(float timeSeconds) {
     PROFILE_ZONE_SCOPED     ("BulletManager::Update");
+
+    std::vector<PendingFire> pendingShots;
+    {
+        PROFILE_ZONE_BEGIN(pendingLockZone, "BulletManager::Update / pending lock wait");
+        std::scoped_lock pendingLock(_pendingShotsMutex);
+        PROFILE_ZONE_END(pendingLockZone);
+        pendingShots.swap(_pendingShots);
+    }
 
     PROFILE_ZONE_BEGIN(lockWaitZone, "BulletManager::Update / lock wait");
     std::scoped_lock lock(_stateMutex);
@@ -117,7 +129,7 @@ void BulletManager::Update(float timeSeconds) {
 
     {
         PROFILE_ZONE_SCOPED("BulletManager::Update / SpawnPendingBullets");
-        SpawnPendingBullets();
+        SpawnPendingBullets(pendingShots);
     }
 
     if (!_hasLastUpdate) {
@@ -133,18 +145,18 @@ void BulletManager::Update(float timeSeconds) {
         SimulateBullets(timeSeconds, dt);
     }
 
-    {
-        PROFILE_ZONE_SCOPED("BulletManager::Update / RemoveExpiredBullets");
-        RemoveExpiredBullets(timeSeconds);
-    }
 }
 
 std::vector<float2> BulletManager::GetBulletPositions() const {
     std::scoped_lock lock(_stateMutex);
     std::vector<float2> out;
-    out.reserve(_bullets.size());
+    out.reserve(_activeBulletIndices.size());
 
-    for (const Bullet& bullet : _bullets) {
+    for (const std::size_t index : _activeBulletIndices) {
+        if (index >= _bullets.size()) {
+            continue;
+        }
+        const Bullet& bullet = _bullets[index];
         if (bullet.alive && bullet.activated) {
             out.push_back(bullet.position);
         }
@@ -230,22 +242,28 @@ bool BulletManager::IntersectSegments(float2 p, float2 r, float2 q, float2 s, fl
     return outT >= 0.0f && outT <= 1.0f && outU >= 0.0f && outU <= 1.0f;
 }
 
-void BulletManager::SpawnPendingBullets() {
-    for (const PendingFire& pending : _pendingShots) {
-        if (_deadBulletIndices.empty()) {
+void BulletManager::SpawnPendingBullets(const std::vector<PendingFire>& pendingShots) {
+    for (const PendingFire& pending : pendingShots) {
+        if (_deadBulletCount == 0) {
             break;
         }
 
-        const std::size_t slot = _deadBulletIndices.back();
-        _deadBulletIndices.pop_back();
+        --_deadBulletCount;
+        const std::size_t slot = _deadBulletIndices[_deadBulletCount];
         _bullets[slot] = {pending.pos, pending.dir, pending.speed, pending.fireTime, pending.lifeTime, true, false};
+        _activeBulletIndices.push_back(slot);
     }
-    _pendingShots.clear();
 }
 
 void BulletManager::SimulateBullets(float timeSeconds, float deltaTime) {
-    for (std::size_t i = 0; i < _bullets.size(); ++i) {
-        Bullet& bullet = _bullets[i];
+    _nextActiveBulletIndices.clear();
+    _nextActiveBulletIndices.reserve(_activeBulletIndices.size());
+    for (const std::size_t index : _activeBulletIndices) {
+        if (index >= _bullets.size()) {
+            continue;
+        }
+
+        Bullet& bullet = _bullets[index];
         if (!bullet.alive) {
             continue;
         }
@@ -254,30 +272,20 @@ void BulletManager::SimulateBullets(float timeSeconds, float deltaTime) {
             bullet.activated = true;
         }
 
-        if (!bullet.activated) {
-            continue;
+        if (bullet.activated) {
+            SimulateBullet(bullet, deltaTime);
         }
 
-        SimulateBullet(bullet, deltaTime);
-        if (!bullet.alive) {
-            _deadBulletIndices.push_back(i);
-        }
-    }
-}
-
-void BulletManager::RemoveExpiredBullets(float timeSeconds) {
-    for (std::size_t i = 0; i < _bullets.size(); ++i) {
-        Bullet& bullet = _bullets[i];
-        if (!bullet.alive) {
-            continue;
-        }
-
-        if (timeSeconds >= bullet.fireTime + bullet.lifeTime) {
+        if (bullet.alive && timeSeconds < bullet.fireTime + bullet.lifeTime) {
+            _nextActiveBulletIndices.push_back(index);
+        } else {
             bullet.alive = false;
             bullet.activated = false;
-            _deadBulletIndices.push_back(i);
+            _deadBulletIndices[_deadBulletCount] = index;
+            ++_deadBulletCount;
         }
     }
+    _activeBulletIndices.swap(_nextActiveBulletIndices);
 }
 
 void BulletManager::SimulateBullet(Bullet& bullet, float deltaTime) {

@@ -38,7 +38,14 @@ void Draw(BulletManager& manager, bool isFiring, bool simulationPaused) {
     PROFILE_ZONE_BEGIN(drawWallsZone, "MainLoop::Draw / Draw Walls");
     const std::vector<Wall> walls = manager.GetWalls();
     for (const Wall& wall : walls) {
-        DrawLineV(ToScreen(wall.a), ToScreen(wall.b), VIOLET);
+        const Vector2 a = ToScreen(wall.a);
+        const Vector2 b = ToScreen(wall.b);
+        DrawLine(
+            static_cast<int>(a.x),
+            static_cast<int>(a.y),
+            static_cast<int>(b.x),
+            static_cast<int>(b.y),
+            VIOLET);
     }
 
     float2 gridBoundsMin = {};
@@ -60,28 +67,41 @@ void Draw(BulletManager& manager, bool isFiring, bool simulationPaused) {
             const float worldX = gridBoundsMin.x + static_cast<float>(x) * gridCellSize;
             const Vector2 a = ToScreen({worldX, gridBoundsMax.y});
             const Vector2 b = ToScreen({worldX, gridBoundsMin.y});
-            DrawLineV(a, b, Fade(DARKGREEN, 0.35f));
+            DrawLine(
+                static_cast<int>(a.x),
+                static_cast<int>(a.y),
+                static_cast<int>(b.x),
+                static_cast<int>(b.y),
+                Fade(DARKGREEN, 0.35f));
         }
 
         for (int y = 1; y < gridHeight; ++y) {
             const float worldY = gridBoundsMin.y + static_cast<float>(y) * gridCellSize;
             const Vector2 a = ToScreen({gridBoundsMin.x, worldY});
             const Vector2 b = ToScreen({gridBoundsMax.x, worldY});
-            DrawLineV(a, b, Fade(DARKGREEN, 0.35f));
+            DrawLine(
+                static_cast<int>(a.x),
+                static_cast<int>(a.y),
+                static_cast<int>(b.x),
+                static_cast<int>(b.y),
+                Fade(DARKGREEN, 0.35f));
         }
     }
     PROFILE_ZONE_END(drawWallsZone);
 
-    PROFILE_ZONE_BEGIN(drawBulletsZone, "MainLoop::Draw / Draw Bullets");
+    PROFILE_ZONE_BEGIN(drawBulletsZone0, "MainLoop::Draw / Draw Bullets - 0");
     const std::vector<float2> bullets = manager.GetBulletPositions();
     const std::uint64_t collisionChecks = manager.GetCollisionChecksPerFrame();
     const std::uint64_t possibleCollisionChecks =
         static_cast<std::uint64_t>(bullets.size()) * static_cast<std::uint64_t>(walls.size());
+    PROFILE_ZONE_END(drawBulletsZone0);
 
+    PROFILE_ZONE_BEGIN(drawBulletsZone1, "MainLoop::Draw / Draw Bullets - 1");
     for (const float2& p : bullets) {
-        DrawCircleV(ToScreen(p), 4.0f, SKYBLUE);
+        const Vector2 sp = ToScreen(p);
+        DrawRectangle(static_cast<int>(sp.x), static_cast<int>(sp.y), 2, 2, SKYBLUE);
     }
-    PROFILE_ZONE_END(drawBulletsZone);
+    PROFILE_ZONE_END(drawBulletsZone1);
 
     DrawText(TextFormat("Alive bullets: %i  Walls: %i", static_cast<int>(bullets.size()), static_cast<int>(walls.size())), 20, 50, 20, LIGHTGRAY);
     DrawText(TextFormat("Collision checks/frame: %llu", static_cast<unsigned long long>(collisionChecks)), 20, 80, 20, LIGHTGRAY);

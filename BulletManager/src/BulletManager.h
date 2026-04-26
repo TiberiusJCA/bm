@@ -77,19 +77,22 @@ private:
     int GetWallCellY(float y) const;
     std::size_t GetWallGridIndex(int x, int y) const;
 
-    void SpawnPendingBullets();
     void SimulateBullets(float timeSeconds, float deltaTime);
-    void RemoveExpiredBullets(float timeSeconds);
+    void SpawnPendingBullets(const std::vector<PendingFire>& pendingShots);
     void SimulateBullet(Bullet& bullet, float deltaTime);
     bool TryFindClosestCollision(float2 start, float2 displacement, std::size_t& wallIndex, float& hitT, float2& hitNormal) const;
     bool IsWallValid(const Wall& wall) const;
 
     std::vector<Bullet> _bullets;
     std::vector<std::size_t> _deadBulletIndices;
+    std::size_t _deadBulletCount = 0;
+    std::vector<std::size_t> _activeBulletIndices;
+    std::vector<std::size_t> _nextActiveBulletIndices;
     std::vector<Wall> _walls;
     std::vector<PendingFire> _pendingShots;
 
     mutable std::mutex _stateMutex;
+    mutable std::mutex _pendingShotsMutex;
 
     float2 _wallsBoundsMin = {};
     float2 _wallsBoundsMax = {};
