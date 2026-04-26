@@ -38,7 +38,7 @@ int main() {
         std::uniform_real_distribution<float> lengthDist(0.6f, 2.8f);
         std::bernoulli_distribution sideDist(0.5);
 
-        constexpr int kWallCount = 400;
+        constexpr int kWallCount = 10000;
         for (int i = 0; i < kWallCount; ++i) {
             const bool onLeftSide = sideDist(wallRng);
             const float cx = onLeftSide ? xLeftDist(wallRng) : xRightDist(wallRng);
@@ -55,13 +55,14 @@ int main() {
     std::atomic<bool> stopWorkers = false;
     std::vector<std::thread> workers;
 
-    for (int i = 0; i < 2; ++i) {
+    for (int i = 0; i < 5; ++i) {
         workers.emplace_back([i, &manager, &stopWorkers]() {
             std::mt19937 rng(1337u + static_cast<unsigned>(i));
             std::uniform_real_distribution<float> angleDist(0.0f, 6.283185307f);
             std::uniform_real_distribution<float> yOffsetDist(-20.0f, 20.0f);
             std::uniform_real_distribution<float> speedDist(8.0f, 16.0f);
-            std::uniform_real_distribution<float> pauseDist(0.10f, 0.35f);
+            // With 5 worker threads and 8s lifetime, this cadence targets ~10,000 live bullets.
+            std::uniform_real_distribution<float> pauseDist(0.0035f, 0.0045f);
 
             while (!stopWorkers.load(std::memory_order_relaxed)) {
                 const float angle = angleDist(rng);
@@ -82,14 +83,17 @@ int main() {
         BeginDrawing();
         ClearBackground(BLACK);
 
-        DrawFPS(20, 20);
+        const int fps = GetFPS();
+        const Color fpsColor = (fps < 60) ? ORANGE : RAYWHITE;
+        DrawText(TextFormat("FPS: %d", fps), 20, 20, 20, fpsColor);
 
         const std::vector<Wall> walls = manager.GetWalls();
         for (const Wall& wall : walls) {
-            DrawLineV(ToScreen(wall.a), ToScreen(wall.b), ORANGE);
+            DrawLineV(ToScreen(wall.a), ToScreen(wall.b), VIOLET);
         }
 
         const std::vector<float2> bullets = manager.GetBulletPositions();
+        DrawText(TextFormat("Alive bullets: %i  Walls: %i", static_cast<int>(bullets.size()), static_cast<int>(walls.size())), 20, 50, 20, LIGHTGRAY);
         for (const float2& p : bullets) {
             DrawCircleV(ToScreen(p), 4.0f, SKYBLUE);
         }
